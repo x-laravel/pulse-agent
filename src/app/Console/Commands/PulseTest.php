@@ -43,14 +43,22 @@ class PulseTest extends Command
 
         $this->info('Servers recorder invoked: ' . ($recorderCalled ? 'YES' : 'NO'));
 
+        // Verify storage binding
+        $storage = app(\Laravel\Pulse\Contracts\Storage::class);
+        $this->info('Storage class: ' . get_class($storage));
+
         // Ingest buffered data into DB
         $this->info('Ingesting...');
+        DB::enableQueryLog();
         try {
             Pulse::ingest();
             $this->info('Ingest: OK');
         } catch (\Throwable $e) {
             $this->error('Ingest: FAILED — ' . $e->getMessage());
-            return;
+        }
+        foreach (DB::getQueryLog() as $q) {
+            $this->line('SQL: ' . $q['query']);
+            $this->line('     ' . json_encode($q['bindings']));
         }
 
         // Check result
