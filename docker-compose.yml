@@ -1,0 +1,13 @@
+services:
+  pulse-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pulse-agent:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Remote server list — edit .docker/servers.php to add servers
+      - ./.docker/servers.php:/app/.docker/servers.php:ro
+      # SSH private key for remote server access
+      - ./.docker/ssh:/root/.ssh:ro
