@@ -1,0 +1,5 @@
+.env
+.docker/ssh/*
+!.docker/ssh/.gitkeep
+src/vendor/
+src/composer.lock
