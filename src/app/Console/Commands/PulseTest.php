@@ -27,7 +27,7 @@ class PulseTest extends Command
         $this->info('Firing SharedBeat...');
         try {
             $time = \Carbon\CarbonImmutable::now()->setSecond(0);
-            event(new SharedBeat($time));
+            event(new SharedBeat($time, 'test'));
             $this->info('SharedBeat fired: OK');
         } catch (\Throwable $e) {
             $this->error('SharedBeat: FAILED — ' . $e->getMessage());
