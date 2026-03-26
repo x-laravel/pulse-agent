@@ -4,11 +4,13 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Laravel\Pulse\Events\SharedBeat;
+use Laravel\Pulse\Facades\Pulse;
 
 class PulseTest extends Command
 {
     protected $signature = 'pulse:test';
-    protected $description = 'Test DB connection and pulse_values table';
+    protected $description = 'Test DB connection, manually fire SharedBeat and check if recorder writes data';
 
     public function handle(): void
     {
@@ -21,20 +23,32 @@ class PulseTest extends Command
             return;
         }
 
-        // pulse_values table
+        // Manually fire SharedBeat with second=0 (triggers Servers recorder: 0 % 15 === 0)
+        $this->info('Firing SharedBeat...');
         try {
-            $count = DB::table('pulse_values')->where('type', 'system')->count();
-            $this->info("pulse_values (type=system): {$count} record(s)");
+            $time = now()->setSecond(0);
+            event(new SharedBeat($time));
+            $this->info('SharedBeat fired: OK');
         } catch (\Throwable $e) {
-            $this->error('pulse_values: ' . $e->getMessage());
+            $this->error('SharedBeat: FAILED — ' . $e->getMessage());
+            return;
         }
 
-        // pulse_aggregates table
+        // Ingest buffered data into DB
+        $this->info('Ingesting...');
         try {
-            $count = DB::table('pulse_aggregates')->whereIn('type', ['cpu', 'memory'])->count();
-            $this->info("pulse_aggregates (cpu/memory): {$count} record(s)");
+            Pulse::ingest();
+            $this->info('Ingest: OK');
         } catch (\Throwable $e) {
-            $this->error('pulse_aggregates: ' . $e->getMessage());
+            $this->error('Ingest: FAILED — ' . $e->getMessage());
+            return;
+        }
+
+        // Check result
+        $system = DB::table('pulse_values')->where('type', 'system')->get(['key', 'value']);
+        $this->info("pulse_values (type=system): {$system->count()} record(s)");
+        foreach ($system as $row) {
+            $this->line("  key={$row->key} value={$row->value}");
         }
     }
 }
