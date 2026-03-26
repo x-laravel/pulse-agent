@@ -1,0 +1,26 @@
+services:
+  pulse-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pulse-agent:latest
+    container_name: pulse-agent
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Remote server list — edit .docker/servers.php to add servers
+      - ./.docker/servers.php:/app/.docker/servers.php:ro
+      # SSH keys and known_hosts — rw so known_hosts can be updated via pulse:test --trust
+      - ./.docker/ssh:/root/.ssh
+
+  pulse-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pulse-agent:latest
+    env_file: .env
+    volumes:
+      - ./.docker/servers.php:/app/.docker/servers.php:ro
+      - ./.docker/ssh:/root/.ssh
+    command: ["php", "artisan", "pulse:test"]
+    profiles: [test]
