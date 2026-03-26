@@ -7,20 +7,31 @@ return [
     'enabled' => env('PULSE_ENABLED', true),
 
     'storage' => [
-        'driver' => 'database',
-        'drivers' => [
-            'database' => [
-                'connection' => env('PULSE_DB_CONNECTION', null),
-                'chunk' => 1000,
-            ],
+        'driver' => env('PULSE_STORAGE_DRIVER', 'database'),
+
+        'trim' => [
+            'keep' => env('PULSE_STORAGE_KEEP', '7 days'),
+        ],
+
+        'database' => [
+            'connection' => env('PULSE_DB_CONNECTION', null),
+            'chunk' => 1000,
         ],
     ],
 
     'ingest' => [
-        'driver' => 'storage',
+        'driver' => env('PULSE_INGEST_DRIVER', 'storage'),
+
+        'buffer' => env('PULSE_INGEST_BUFFER', 5_000),
+
         'trim' => [
-            'lottery' => [1, 1000],
-            'keep' => '7 days',
+            'lottery' => [1, 1_000],
+            'keep' => env('PULSE_INGEST_KEEP', '7 days'),
+        ],
+
+        'redis' => [
+            'connection' => env('PULSE_REDIS_CONNECTION'),
+            'chunk' => 1000,
         ],
     ],
 

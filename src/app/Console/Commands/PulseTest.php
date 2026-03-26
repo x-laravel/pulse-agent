@@ -30,36 +30,65 @@ class PulseTest extends Command
             return 0;
         });
 
-        // Manually fire SharedBeat with second=0 (triggers Servers recorder: 0 % 15 === 0)
-        $this->info('Firing SharedBeat...');
+        // Call recorder directly (bypasses Pulse::rescue() so exceptions surface)
+        $this->info('Calling recorder directly...');
+        $time = \Carbon\CarbonImmutable::now()->setSecond(0);
         try {
-            $time = \Carbon\CarbonImmutable::now()->setSecond(0);
-            event(new SharedBeat($time, 'test'));
-            $this->info('SharedBeat fired: OK');
+            $recorder = app(\Laravel\Pulse\Recorders\Servers::class);
+            $recorder->record(new SharedBeat($time, 'test'));
+            $this->info('Recorder: OK');
         } catch (\Throwable $e) {
-            $this->error('SharedBeat: FAILED — ' . $e->getMessage());
+            $this->error('Recorder error: ' . $e->getMessage());
+            $this->error('  at ' . $e->getFile() . ':' . $e->getLine());
             return;
         }
 
         $this->info('Servers recorder invoked: ' . ($recorderCalled ? 'YES' : 'NO'));
 
+        // Check Pulse buffer directly
+        $pulse = app(\Laravel\Pulse\Pulse::class);
+        $ref = new \ReflectionClass($pulse);
+        $prop = $ref->getProperty('entries');
+        $prop->setAccessible(true);
+        $entries = $prop->getValue($pulse);
+        $this->info('Pulse buffer count: ' . count($entries));
+
         // Verify storage binding
         $storage = app(\Laravel\Pulse\Contracts\Storage::class);
         $this->info('Storage class: ' . get_class($storage));
 
+        // Try direct store to verify storage class works
+        $this->info('Testing direct storage...');
+        try {
+            $storage = app(\Laravel\Pulse\Contracts\Storage::class);
+            $value = new \Laravel\Pulse\Value(
+                timestamp: now()->timestamp,
+                type: 'system',
+                key: 'test-direct',
+                value: json_encode(['name' => 'test', 'cpu' => 1, 'memory_used' => 100, 'memory_total' => 1000, 'storage' => []]),
+            );
+            DB::enableQueryLog();
+            $storage->store(collect([$value]));
+            $testRecord = DB::table('pulse_values')->where('type', 'system')->where('key', 'test-direct')->first();
+            $this->info('Direct store: ' . ($testRecord ? 'OK — record written' : 'FAILED — record NOT in DB'));
+        } catch (\Throwable $e) {
+            $this->error('Direct store FAILED: ' . $e->getMessage());
+            $this->error('  at ' . $e->getFile() . ':' . $e->getLine());
+        }
+        foreach (DB::getQueryLog() as $q) {
+            $this->line('SQL: ' . $q['query']);
+        }
+
         // Ingest buffered data into DB
-        $this->info('Ingesting...');
-        DB::enableQueryLog();
+        $this->info('Ingesting buffer...');
+        DB::flushQueryLog();
         try {
             Pulse::ingest();
             $this->info('Ingest: OK');
         } catch (\Throwable $e) {
             $this->error('Ingest: FAILED — ' . $e->getMessage());
         }
-        foreach (DB::getQueryLog() as $q) {
-            $this->line('SQL: ' . $q['query']);
-            $this->line('     ' . json_encode($q['bindings']));
-        }
+        $this->info('Ingest SQL count: ' . count(DB::getQueryLog()));
 
         // Check result
         $system = DB::table('pulse_values')->where('type', 'system')->get(['key', 'value']);
