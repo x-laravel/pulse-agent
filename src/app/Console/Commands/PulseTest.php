@@ -23,6 +23,13 @@ class PulseTest extends Command
             return;
         }
 
+        // Check if Servers recorder is actually invoked
+        $recorderCalled = false;
+        \Laravel\Pulse\Recorders\Servers::detectCpuUsing(function () use (&$recorderCalled) {
+            $recorderCalled = true;
+            return 0;
+        });
+
         // Manually fire SharedBeat with second=0 (triggers Servers recorder: 0 % 15 === 0)
         $this->info('Firing SharedBeat...');
         try {
@@ -33,6 +40,8 @@ class PulseTest extends Command
             $this->error('SharedBeat: FAILED — ' . $e->getMessage());
             return;
         }
+
+        $this->info('Servers recorder invoked: ' . ($recorderCalled ? 'YES' : 'NO'));
 
         // Ingest buffered data into DB
         $this->info('Ingesting...');
