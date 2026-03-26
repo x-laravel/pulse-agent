@@ -2,5 +2,5 @@
 
 return [
     Laravel\Pulse\PulseServiceProvider::class,
-    App\Providers\AppServiceProvider::class,
+    XLaravel\PulseOciMysql\PulseOciMysqlServiceProvider::class,
 ];
