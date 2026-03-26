@@ -26,7 +26,7 @@ class PulseTest extends Command
         // Manually fire SharedBeat with second=0 (triggers Servers recorder: 0 % 15 === 0)
         $this->info('Firing SharedBeat...');
         try {
-            $time = now()->setSecond(0);
+            $time = \Carbon\CarbonImmutable::now()->setSecond(0);
             event(new SharedBeat($time));
             $this->info('SharedBeat fired: OK');
         } catch (\Throwable $e) {
