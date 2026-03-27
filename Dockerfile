@@ -14,10 +14,7 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progre
 COPY src/ .
 
 RUN mkdir -p bootstrap/cache \
-             storage/framework/cache \
-             storage/framework/sessions \
              storage/framework/views \
-             storage/logs \
     && chmod -R 777 bootstrap/cache storage \
     && chmod +x artisan
 
