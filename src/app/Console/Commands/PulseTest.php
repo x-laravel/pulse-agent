@@ -4,97 +4,94 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Laravel\Pulse\Events\SharedBeat;
-use Laravel\Pulse\Facades\Pulse;
 
 class PulseTest extends Command
 {
     protected $signature = 'pulse:test';
-    protected $description = 'Test DB connection, manually fire SharedBeat and check if recorder writes data';
+    protected $description = 'Check database connectivity and remote server SSH access';
 
     public function handle(): void
     {
-        // DB connection
+        $this->checkDatabase();
+        $this->checkRemoteServers();
+    }
+
+    protected function checkDatabase(): void
+    {
+        $this->info('── Database ──────────────────────────────');
+
         try {
             DB::select('SELECT 1');
-            $this->info('DB connection: OK');
+            $this->info('  Connection : OK (' . config('database.connections.mysql.host') . ')');
         } catch (\Throwable $e) {
-            $this->error('DB connection: FAILED — ' . $e->getMessage());
+            $this->error('  Connection : FAILED — ' . $e->getMessage());
             return;
         }
 
-        // Check if Servers recorder is actually invoked
-        $recorderCalled = false;
-        \Laravel\Pulse\Recorders\Servers::detectCpuUsing(function () use (&$recorderCalled) {
-            $recorderCalled = true;
-            return 0;
-        });
-
-        // Call recorder directly (bypasses Pulse::rescue() so exceptions surface)
-        $this->info('Calling recorder directly...');
-        $time = \Carbon\CarbonImmutable::now()->setSecond(0);
         try {
-            $recorder = app(\Laravel\Pulse\Recorders\Servers::class);
-            $recorder->record(new SharedBeat($time, 'test'));
-            $this->info('Recorder: OK');
+            $counts = [
+                'pulse_values'     => DB::table('pulse_values')->count(),
+                'pulse_entries'    => DB::table('pulse_entries')->count(),
+                'pulse_aggregates' => DB::table('pulse_aggregates')->count(),
+            ];
+            foreach ($counts as $table => $count) {
+                $this->line("  {$table}: {$count} rows");
+            }
         } catch (\Throwable $e) {
-            $this->error('Recorder error: ' . $e->getMessage());
-            $this->error('  at ' . $e->getFile() . ':' . $e->getLine());
+            $this->error('  Tables     : ' . $e->getMessage());
+        }
+    }
+
+    protected function checkRemoteServers(): void
+    {
+        $this->info('── Remote Servers ────────────────────────');
+
+        $servers = config('pulse.recorders.' . \App\Recorders\RemoteServers::class . '.servers', []);
+
+        if (empty($servers)) {
+            $this->warn('  No remote servers configured in .docker/servers.php');
             return;
         }
 
-        $this->info('Servers recorder invoked: ' . ($recorderCalled ? 'YES' : 'NO'));
+        $scriptPath = base_path('app/Recorders/server-stats.sh');
 
-        // Check Pulse buffer directly
-        $pulse = app(\Laravel\Pulse\Pulse::class);
-        $ref = new \ReflectionClass($pulse);
-        $prop = $ref->getProperty('entries');
-        $prop->setAccessible(true);
-        $entries = $prop->getValue($pulse);
-        $this->info('Pulse buffer count: ' . count($entries));
+        foreach ($servers as $server) {
+            $name = $server['server_name'];
+            $ssh  = $server['server_ssh'];
+            $dirs = $server['directories'] ?? ['/'];
 
-        // Verify storage binding
-        $storage = app(\Laravel\Pulse\Contracts\Storage::class);
-        $this->info('Storage class: ' . get_class($storage));
+            $this->line("  [{$name}] {$ssh}");
 
-        // Try direct store to verify storage class works
-        $this->info('Testing direct storage...');
-        try {
-            $storage = app(\Laravel\Pulse\Contracts\Storage::class);
-            $value = new \Laravel\Pulse\Value(
-                timestamp: now()->timestamp,
-                type: 'system',
-                key: 'test-direct',
-                value: json_encode(['name' => 'test', 'cpu' => 1, 'memory_used' => 100, 'memory_total' => 1000, 'storage' => []]),
-            );
-            DB::enableQueryLog();
-            $storage->store(collect([$value]));
-            $testRecord = DB::table('pulse_values')->where('type', 'system')->where('key', 'test-direct')->first();
-            $this->info('Direct store: ' . ($testRecord ? 'OK — record written' : 'FAILED — record NOT in DB'));
-        } catch (\Throwable $e) {
-            $this->error('Direct store FAILED: ' . $e->getMessage());
-            $this->error('  at ' . $e->getFile() . ':' . $e->getLine());
-        }
-        foreach (DB::getQueryLog() as $q) {
-            $this->line('SQL: ' . $q['query']);
-        }
+            $dirArgs = implode(' ', array_map('escapeshellarg', $dirs));
+            $raw = shell_exec("$ssh 'bash -s' $dirArgs < " . escapeshellarg($scriptPath) . ' 2>&1');
 
-        // Ingest buffered data into DB
-        $this->info('Ingesting buffer...');
-        DB::flushQueryLog();
-        try {
-            Pulse::ingest();
-            $this->info('Ingest: OK');
-        } catch (\Throwable $e) {
-            $this->error('Ingest: FAILED — ' . $e->getMessage());
-        }
-        $this->info('Ingest SQL count: ' . count(DB::getQueryLog()));
+            if (empty($raw)) {
+                $this->error("    SSH      : FAILED — no output");
+                continue;
+            }
 
-        // Check result
-        $system = DB::table('pulse_values')->where('type', 'system')->get(['key', 'value']);
-        $this->info("pulse_values (type=system): {$system->count()} record(s)");
-        foreach ($system as $row) {
-            $this->line("  key={$row->key} value={$row->value}");
+            $lines = explode("\n", trim($raw));
+
+            if (count($lines) < 3 + (count($dirs) * 2)) {
+                $this->error("    SSH      : FAILED — unexpected output: " . implode(', ', $lines));
+                continue;
+            }
+
+            $memTotalMb = (int) round((int) $lines[0] / 1024);
+            $memUsedMb  = (int) round(((int) $lines[0] - (int) $lines[1]) / 1024);
+            $cpu        = (int) $lines[2];
+
+            $this->info("    SSH      : OK");
+            $this->line("    CPU      : {$cpu}%");
+            $this->line("    Memory   : {$memUsedMb} / {$memTotalMb} MB");
+
+            $offset = 3;
+            foreach ($dirs as $dir) {
+                $usedMb  = (int) round((int) ($lines[$offset]     ?? 0) / 1024);
+                $totalMb = (int) round((int) ($lines[$offset + 1] ?? 0) / 1024);
+                $this->line("    Disk {$dir}: {$usedMb} / {$totalMb} MB");
+                $offset += 2;
+            }
         }
     }
 }
