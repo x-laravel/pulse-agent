@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\DB;
 
 class PulseTest extends Command
 {
-    protected $signature = 'pulse:test';
+    protected $signature = 'pulse:test {--trust : Add remote server host keys to known_hosts automatically}';
     protected $description = 'Check database connectivity and remote server SSH access';
 
     public function handle(): void
@@ -17,6 +17,16 @@ class PulseTest extends Command
         $this->newLine();
         $this->checkRemoteServers();
         $this->newLine();
+    }
+
+    protected function extractHost(string $sshCommand): string
+    {
+        // Handles: ssh user@host, ssh user@host -p 2222, ssh -p 2222 user@host
+        if (preg_match('/(\S+@\S+)/', $sshCommand, $matches)) {
+            return $matches[1];
+        }
+
+        return '';
     }
 
     protected function checkDatabase(): void
@@ -65,6 +75,12 @@ class PulseTest extends Command
 
             $this->newLine();
             $this->line("  <fg=white;options=bold>{$name}</> <fg=gray>{$ssh}</>");
+
+            if ($this->option('trust')) {
+                $host = $this->extractHost($ssh);
+                shell_exec("ssh-keyscan -H {$host} >> /root/.ssh/known_hosts 2>/dev/null");
+                $this->line('  <fg=gray>│</> Host key added to known_hosts');
+            }
 
             $dirArgs = implode(' ', array_map('escapeshellarg', $dirs));
             $raw = shell_exec("$ssh 'bash -s' $dirArgs < " . escapeshellarg($scriptPath) . ' 2>&1');
