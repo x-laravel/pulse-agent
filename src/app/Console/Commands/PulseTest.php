@@ -22,7 +22,7 @@ class PulseTest extends Command
     protected function extractHost(string $sshCommand): string
     {
         // Handles: ssh user@host, ssh user@host -p 2222, ssh -p 2222 user@host
-        if (preg_match('/(\S+@\S+)/', $sshCommand, $matches)) {
+        if (preg_match('/\w+@(\S+)/', $sshCommand, $matches)) {
             return $matches[1];
         }
 
